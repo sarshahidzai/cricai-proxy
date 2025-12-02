@@ -1,61 +1,59 @@
-
 import express from "express";
 import fetch from "node-fetch";
 import cors from "cors";
 
 const app = express();
 app.use(cors());
-app.use(express.json());
 
-// ========== CONFIG ==========
-const PORT = process.env.PORT || 3000;
-const CRICBUZZ_URL = "https://www.cricbuzz.com";
-const ESPN_URL = "https://site.web.api.espn.com/apis/v2/sports/cricket";
-const YAHOO_URL = "https://cricket.yahoo.net";
-
-// Logging helper
-function log(type, msg) {
-    console.log(`[${new Date().toISOString()}] [${type}]`, msg);
-}
-
-// Proxy Engine
-async function proxy(url) {
-    try {
-        log("FETCH", url);
-        const res = await fetch(url, {
-            headers: { "User-Agent": "CRICAI Proxy Server" }
-        });
-        return await res.text();
-    } catch (err) {
-        log("ERROR", err.toString());
-        return JSON.stringify({ error: "Failed", detail: err.toString() });
-    }
-}
-
-// Routes
-app.get("/", (req, res) => {
-    res.json({
-        status: "CRICAI Proxy v2 running",
-        endpoints: ["/cricbuzz", "/espn", "/yahoo"]
-    });
+// ---------- STATUS ----------
+app.get("/status", (req, res) => {
+  res.json({ status: "OK", service: "CRICAI Proxy Server", time: Date.now() });
 });
 
+// ---------- CRICBUZZ ----------
 app.get("/cricbuzz", async (req, res) => {
-    const html = await proxy(CRICBUZZ_URL);
+  try {
+    const url = "https://www.cricbuzz.com/";
+    const response = await fetch(url);
+    const html = await response.text();
     res.send(html);
+  } catch (err) {
+    res.status(500).json({ error: "Cricbuzz fetch failed", details: err.toString() });
+  }
 });
 
+// ---------- ESPN ----------
 app.get("/espn", async (req, res) => {
-    const json = await proxy(`${ESPN_URL}/scoreboard`);
-    res.send(json);
+  try {
+    const api =
+      "https://site.web.api.espn.com/apis/v2/sports/cricket/scoreboard";
+    const response = await fetch(api);
+    const json = await response.json();
+    res.json(json);
+  } catch (err) {
+    res.status(500).json({ error: "ESPN fetch failed", details: err.toString() });
+  }
 });
 
+// ---------- YAHOO CRICKET ----------
 app.get("/yahoo", async (req, res) => {
-    const html = await proxy(YAHOO_URL);
+  try {
+    const url = "https://cricket.yahoo.com/";
+    const response = await fetch(url);
+    const html = await response.text();
     res.send(html);
+  } catch (err) {
+    res.status(500).json({ error: "Yahoo fetch failed", details: err.toString() });
+  }
 });
 
-// Start server
+// ---------- ROOT ----------
+app.get("/", (req, res) => {
+  res.send("CRICAI Proxy Server is running.");
+});
+
+// ---------- START SERVER ----------
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-    log("START", `CRICAI Proxy running on ${PORT}`);
+  console.log(`CRICAI Proxy running on port ${PORT}`);
 });
