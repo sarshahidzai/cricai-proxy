@@ -142,18 +142,24 @@ app.get("/recent", async (req, res) => {
 });
 
 // ------------------------------
-// SCORECARD (Only working RapidAPI endpoint)
+// SCORECARD (RapidAPI v2 endpoint ONLY)
 // ------------------------------
 app.get("/scorecard", async (req, res) => {
   const id = req.query.id;
-  if (!id) return res.json({ error: true, message: "Missing id" });
+  if (!id) {
+    return res.json({
+      scorecard: false,
+      error: true,
+      message: "Missing id"
+    });
+  }
 
-  // cache
+  // Cache check
   if (CACHE.scorecard[id] && isFresh(CACHE.scorecard[id].ts)) {
     return res.json(CACHE.scorecard[id].data);
   }
 
-  // Only working endpoint for your plan
+  // Only working endpoint for your RapidAPI plan
   const data = await rapidFetch(`/matches/get-scorecard-v2?matchId=${id}`);
 
   if (data.error || !data.json) {
@@ -161,13 +167,13 @@ app.get("/scorecard", async (req, res) => {
       scorecard: false,
       error: true,
       message: "Error fetching scorecard",
-      details: data.status,
+      details: data.status
     });
   }
 
   const payload = {
     scorecard: data.json,
-    updated: Date.now(),
+    updated: Date.now()
   };
 
   CACHE.scorecard[id] = { data: payload, ts: Date.now() };
