@@ -1,7 +1,3 @@
-// ======================================================================
-// CRICAI FULL PROXY SERVER (RapidAPI Stable Version + Fallback Cache)
-// ======================================================================
-
 import express from "express";
 import axios from "axios";
 import cors from "cors";
@@ -10,34 +6,23 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ======================================================================
-// ENVIRONMENT VARIABLES
-// ======================================================================
+// Load RapidAPI info
 const RAPID_KEY = process.env.RAPIDAPI_KEY;
-const RAPID_HOST = process.env.RAPIDAPI_HOST || "cricket-live-data.p.rapidapi.com";
-const RAPID_BASE = process.env.RAPIDAPI_BASE || "https://cricket-live-data.p.rapidapi.com";
+const RAPID_HOST = process.env.RAPIDAPI_HOST || "cricbuzz-cricket.p.rapidapi.com";
+const RAPID_BASE = process.env.RAPIDAPI_BASE || "https://cricbuzz-cricket.p.rapidapi.com";
 
-if (!RAPID_KEY) {
-  console.log("❌ Missing RAPIDAPI_KEY");
-}
-
-// ======================================================================
-// CACHE SYSTEM FOR FALLBACKS
-// ======================================================================
+// Local fallback cache
 let CACHE = {
   live: null,
   upcoming: null,
   recent: null,
-  scorecard: {} // scorecard[id] = cached data
+  scorecard: {}
 };
 
-// Helper to call RapidAPI safely
-async function callRapidAPI(endpoint, params = {}) {
-  const url = `${RAPID_BASE}${endpoint}`;
-  
+// Safe wrapper for API calls
+async function callAPI(url) {
   try {
     const response = await axios.get(url, {
-      params,
       headers: {
         "X-RapidAPI-Key": RAPID_KEY,
         "X-RapidAPI-Host": RAPID_HOST
@@ -45,13 +30,10 @@ async function callRapidAPI(endpoint, params = {}) {
     });
     return { ok: true, data: response.data };
   } catch (err) {
-    return { ok: false, error: err?.response?.status || err.message };
+    return { ok: false, code: err?.response?.status };
   }
 }
 
-// ======================================================================
-// HOME ROUTE
-// ======================================================================
 app.get("/", (req, res) => {
   res.json({
     status: "OK",
@@ -60,132 +42,118 @@ app.get("/", (req, res) => {
   });
 });
 
-// ======================================================================
-// LIVE MATCHES (with fallback)
-// ======================================================================
+// ================= LIVE ==================
 app.get("/live", async (req, res) => {
-  const api = await callRapidAPI("/match/live");
+  const url = `${RAPID_BASE}/matches/v1/live`;
+  const api = await callAPI(url);
 
   if (api.ok) {
     CACHE.live = api.data;
     return res.json(api.data);
   }
 
-  // FALLBACK
   if (CACHE.live) {
     return res.json({
       live: CACHE.live,
       error: true,
-      message: "Live API failed — serving cached data.",
-      lastUpdated: Date.now()
+      message: "Live API failed, using cached result",
+      code: api.code
     });
   }
 
   return res.status(500).json({
     live: false,
     error: true,
-    message: "Unexpected error fetching live matches.",
-    details: api.error
+    message: "Failed to fetch live matches",
+    code: api.code
   });
 });
 
-// ======================================================================
-// UPCOMING MATCHES (with fallback)
-// ======================================================================
+// ================= UPCOMING ==================
 app.get("/upcoming", async (req, res) => {
-  const api = await callRapidAPI("/match/upcoming");
+  const url = `${RAPID_BASE}/matches/v1/upcoming`;
+  const api = await callAPI(url);
 
   if (api.ok) {
     CACHE.upcoming = api.data;
     return res.json(api.data);
   }
 
-  // FALLBACK
   if (CACHE.upcoming) {
     return res.json({
       upcoming: CACHE.upcoming,
       error: true,
-      message: "Upcoming API failed — serving cached data.",
-      lastUpdated: Date.now()
+      message: "Upcoming API failed, using cached",
+      code: api.code
     });
   }
 
   return res.status(500).json({
     upcoming: false,
     error: true,
-    message: "Unexpected error fetching upcoming matches.",
-    details: api.error
+    message: "Failed to fetch upcoming matches",
+    code: api.code
   });
 });
 
-// ======================================================================
-// RECENT MATCHES (with fallback)
-// ======================================================================
+// ================= RECENT ==================
 app.get("/recent", async (req, res) => {
-  const api = await callRapidAPI("/match/recent");
+  const url = `${RAPID_BASE}/matches/v1/recent`;
+  const api = await callAPI(url);
 
   if (api.ok) {
     CACHE.recent = api.data;
     return res.json(api.data);
   }
 
-  // FALLBACK
   if (CACHE.recent) {
     return res.json({
       recent: CACHE.recent,
       error: true,
-      message: "Recent API failed — serving cached data.",
-      lastUpdated: Date.now()
+      message: "Recent API failed, using cached",
+      code: api.code
     });
   }
 
   return res.status(500).json({
     recent: false,
     error: true,
-    message: "Unexpected error fetching recent matches.",
-    details: api.error
+    message: "Failed to fetch recent matches",
+    code: api.code
   });
 });
 
-// ======================================================================
-// SCORECARD (with per-match fallback)
-// ======================================================================
+// ================= SCORECARD ==================
 app.get("/scorecard", async (req, res) => {
   const matchId = req.query.id;
+  if (!matchId) return res.status(400).json({ error: "matchId required" });
 
-  if (!matchId) {
-    return res.status(400).json({ error: "matchId is required" });
-  }
-
-  const api = await callRapidAPI("/match/scorecard", { matchId });
+  const url = `${RAPID_BASE}/mcenter/v1/${matchId}/hscard`;
+  const api = await callAPI(url);
 
   if (api.ok) {
     CACHE.scorecard[matchId] = api.data;
     return res.json(api.data);
   }
 
-  // FALLBACK
   if (CACHE.scorecard[matchId]) {
     return res.json({
       scorecard: CACHE.scorecard[matchId],
       error: true,
-      message: "Scorecard API failed — serving cached data.",
-      lastUpdated: Date.now()
+      message: "Scorecard API failed, using cached",
+      code: api.code
     });
   }
 
   return res.status(500).json({
     scorecard: false,
     error: true,
-    message: "Unexpected error fetching scorecard.",
-    details: api.error
+    message: "Failed to fetch scorecard",
+    code: api.code
   });
 });
 
-// ======================================================================
-// START SERVER
-// ======================================================================
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`🚀 CRICAI Proxy running on port ${PORT}`);
-});
+app.listen(PORT, () =>
+  console.log(`🚀 CRICAI Proxy running on port ${PORT}`)
+);
