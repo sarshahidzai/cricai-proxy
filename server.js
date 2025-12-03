@@ -9,57 +9,67 @@ const RAPIDAPI_BASE = process.env.RAPIDAPI_BASE;
 const RAPIDAPI_HOST = process.env.RAPIDAPI_HOST;
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
 
-/* ---------------------------------------
-   HELPER: Safe API fetch with fallback
-----------------------------------------*/
+/* -------------------------------------------------------
+   Helper: Standard RapidAPI fetch with retry on 429
+--------------------------------------------------------*/
 async function safeRapidAPI(path, params = {}) {
   try {
     const url = `${RAPIDAPI_BASE}${path}`;
-    const res = await axios.get(url, {
-      params,
-      headers: {
-        "X-RapidAPI-Host": RAPIDAPI_HOST,
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
-      },
-      timeout: 8000,
-    });
+    const headers = {
+      "X-RapidAPI-Host": RAPIDAPI_HOST,
+      "X-RapidAPI-Key": RAPIDAPI_KEY,
+    };
 
-    return { ok: true, data: res.data };
+    try {
+      const res = await axios.get(url, { params, headers, timeout: 7000 });
+      return { ok: true, data: res.data };
+    } catch (err) {
+      if (err.response?.status === 429) {
+        await new Promise(r => setTimeout(r, 1500)); // retry after 1.5 sec
+
+        const retry = await axios.get(url, { params, headers, timeout: 7000 });
+        return { ok: true, data: retry.data };
+      }
+      throw err;
+    }
+
   } catch (err) {
     return { ok: false, error: err };
   }
 }
 
-/* ---------------------------------------
-   HTML SCRAPER (Fallback)
-----------------------------------------*/
-async function scrapeMatches(type = "live") {
-  const mapping = {
+/* -------------------------------------------------------
+   Updated Cricbuzz Scraper - December 2025
+--------------------------------------------------------*/
+
+async function scrapeCricbuzz(type) {
+  const map = {
     live: "live-cricket-scores",
     recent: "cricket-match-results",
     upcoming: "cricket-schedule-upcoming",
   };
 
-  const url = `https://www.cricbuzz.com/${mapping[type]}`;
-
   try {
+    const url = `https://www.cricbuzz.com/${map[type]}`;
     const html = await axios.get(url, {
       headers: { "User-Agent": "Mozilla/5.0" },
+      timeout: 7000
     });
 
     const $ = cheerio.load(html.data);
     const matches = [];
 
-    $(".cb-mtch-lst").each((_, el) => {
-      const title = $(el).find(".cb-lv-scr-mtch-hdr").text().trim();
+    // 🔥 NEW SELECTORS (Dec 2025)
+    $(".cb-mtch-blk").each((_, el) => {
+      const title = $(el).find(".cb-col-100 .text-hvr-underline").text().trim();
       const status = $(el).find(".cb-text-inprogress, .cb-text-complete, .cb-text-preview").text().trim();
-      const teams = $(el).find(".cb-lv-scrs-well").text().trim();
+      const summary = $(el).find(".cb-hmscg-bat-txt, .cb-lv-scrs-well").text().trim();
 
       if (title) {
         matches.push({
           title,
-          status: status || null,
-          summary: teams || null,
+          status: status || "Unknown",
+          summary: summary || "No summary"
         });
       }
     });
@@ -67,81 +77,73 @@ async function scrapeMatches(type = "live") {
     return { ok: true, matches };
 
   } catch (err) {
-    return { ok: false, error: err };
+    return { ok: false, matches: [] };
   }
 }
 
-/* ---------------------------------------
-   ENDPOINT: /live
-----------------------------------------*/
+/* -------------------------------------------------------
+   LIVE
+--------------------------------------------------------*/
 app.get("/live", async (req, res) => {
   const api = await safeRapidAPI("/matches/v1/live");
 
   if (api.ok && api.data?.typeMatches?.length > 0) {
-    return res.json({
-      live: api.data.typeMatches,
-      updated: Date.now(),
-    });
+    return res.json({ live: api.data.typeMatches, updated: Date.now() });
   }
 
-  const fb = await scrapeMatches("live");
+  const fb = await scrapeCricbuzz("live");
   return res.json({
-    live: fb.ok ? fb.matches : [],
+    live: fb.matches,
     fallback: true,
-    updated: Date.now(),
+    updated: Date.now()
   });
 });
 
-/* ---------------------------------------
-   ENDPOINT: /recent
-----------------------------------------*/
+/* -------------------------------------------------------
+   RECENT
+--------------------------------------------------------*/
 app.get("/recent", async (req, res) => {
   const api = await safeRapidAPI("/matches/v1/recent");
 
   if (api.ok && api.data?.typeMatches?.length > 0) {
-    return res.json({
-      recent: api.data.typeMatches,
-      updated: Date.now(),
-    });
+    return res.json({ recent: api.data.typeMatches, updated: Date.now() });
   }
 
-  const fb = await scrapeMatches("recent");
+  const fb = await scrapeCricbuzz("recent");
   return res.json({
-    recent: fb.ok ? fb.matches : [],
+    recent: fb.matches,
     fallback: true,
-    updated: Date.now(),
+    updated: Date.now()
   });
 });
 
-/* ---------------------------------------
-   ENDPOINT: /upcoming
-----------------------------------------*/
+/* -------------------------------------------------------
+   UPCOMING
+--------------------------------------------------------*/
 app.get("/upcoming", async (req, res) => {
   const api = await safeRapidAPI("/matches/v1/upcoming");
 
   if (api.ok && api.data?.typeMatches?.length > 0) {
-    return res.json({
-      upcoming: api.data.typeMatches,
-      updated: Date.now(),
-    });
+    return res.json({ upcoming: api.data.typeMatches, updated: Date.now() });
   }
 
-  const fb = await scrapeMatches("upcoming");
+  const fb = await scrapeCricbuzz("upcoming");
   return res.json({
-    upcoming: fb.ok ? fb.matches : [],
+    upcoming: fb.matches,
     fallback: true,
-    updated: Date.now(),
+    updated: Date.now()
   });
 });
 
-/* ---------------------------------------
-   SCORECARD (no fallback)
-----------------------------------------*/
+/* -------------------------------------------------------
+   SCORECARD (Fix: Correct parameter name `id`)
+--------------------------------------------------------*/
 app.get("/scorecard", async (req, res) => {
   const id = req.query.id;
-  if (!id) return res.json({ error: true, message: "Missing id" });
 
-  const api = await safeRapidAPI(`/matches/get-scorecard-v2`, { matchId: id });
+  if (!id) return res.json({ error: true, message: "Missing ?id=" });
+
+  const api = await safeRapidAPI("/matches/get-scorecard-v2", { id });
 
   if (api.ok) {
     return res.json(api.data);
@@ -150,13 +152,13 @@ app.get("/scorecard", async (req, res) => {
   return res.json({
     scorecard: false,
     error: true,
-    message: "Failed to fetch scorecard",
+    message: "Error fetching scorecard",
   });
 });
 
-/* ---------------------------------------
+/* -------------------------------------------------------
    SERVER START
-----------------------------------------*/
+--------------------------------------------------------*/
 app.listen(PORT, () => {
   console.log("CRICAI Proxy running on port", PORT);
 });
