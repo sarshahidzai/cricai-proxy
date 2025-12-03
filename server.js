@@ -141,45 +141,117 @@ app.get("/recent", async (req, res) => {
   });
 });
 
-// ------------------------------
-// SCORECARD (RapidAPI v2 endpoint ONLY)
-// ------------------------------
-app.get("/scorecard", async (req, res) => {
-  const id = req.query.id;
-  if (!id) {
+// --------------------------------------
+// GET VALID MATCH IDs (for scorecard fallback)
+// --------------------------------------
+app.get("/match-ids", async (req, res) => {
+  try {
+    // Fetch recent matches
+    let recent = await rapidFetch("/matches/v1/recent");
+    if (recent.error) recent = await rapidFetch("/matches/v1/results");
+
+    // Fetch upcoming matches
+    let upcoming = await rapidFetch("/matches/v1/upcoming");
+    if (upcoming.error) upcoming = await rapidFetch("/matches/v1/schedule");
+
+    // Fetch live matches
+    let live = await rapidFetch("/matches/v1/live");
+    if (live.error) live = await rapidFetch("/matches/v1/live?status=all");
+
+    // Extract match IDs from any dataset
+    const extractIds = (json) => {
+      if (!json || !json.typeMatches) return [];
+      let out = [];
+
+      json.typeMatches.forEach(tm => {
+        if (!tm.seriesMatches) return;
+
+        tm.seriesMatches.forEach(series => {
+          if (!series.seriesAdWrapper || !series.seriesAdWrapper.matches) return;
+
+          series.seriesAdWrapper.matches.forEach(m => {
+            if (m.matchInfo?.matchId) {
+              out.push({
+                matchId: m.matchInfo.matchId,
+                matchDesc: m.matchInfo.matchDesc,
+                seriesName: m.matchInfo.seriesName,
+                team1: m.matchInfo.team1?.teamName,
+                team2: m.matchInfo.team2?.teamName
+              });
+            }
+          });
+        });
+      });
+
+      return out;
+    };
+
+    const ids = {
+      live: extractIds(live.json),
+      recent: extractIds(recent.json),
+      upcoming: extractIds(upcoming.json),
+    };
+
     return res.json({
-      scorecard: false,
-      error: true,
-      message: "Missing id"
+      success: true,
+      updated: Date.now(),
+      ...ids
+    });
+
+  } catch (err) {
+    return res.json({
+      success: false,
+      message: "Failed to load match IDs",
+      error: err.message
     });
   }
+});
 
-  // Cache check
+
+
+// --------------------------------------
+// SCORECARD (smart v1 → v2 fallback)
+// --------------------------------------
+app.get("/scorecard", async (req, res) => {
+  const id = req.query.id;
+  if (!id) return res.json({ error: true, message: "Missing match ID" });
+
+  // Cached?
   if (CACHE.scorecard[id] && isFresh(CACHE.scorecard[id].ts)) {
     return res.json(CACHE.scorecard[id].data);
   }
 
-  // Only working endpoint for your RapidAPI plan
-  const data = await rapidFetch(`/matches/get-scorecard-v2?matchId=${id}`);
+  // ---- STEP 1: Try RapidAPI v1 endpoint
+  let v1 = await rapidFetch(`/matches/v1/${id}/scorecard`);
 
-  if (data.error || !data.json) {
+  // ---- STEP 2: If v1 fails OR returns empty → Try RapidAPI v2
+  let final = v1;
+  if (v1.error || !v1.json) {
+    final = await rapidFetch(`/matches/get-scorecard-v2?matchId=${id}`);
+  }
+
+  // ---- STEP 3: If BOTH fail → return descriptive error
+  if (final.error || !final.json) {
     return res.json({
       scorecard: false,
       error: true,
-      message: "Error fetching scorecard",
-      details: data.status
+      message: "Scorecard not available",
+      details: final.status || "Unknown error",
     });
   }
 
+  // ---- STEP 4: Save to cache
   const payload = {
-    scorecard: data.json,
-    updated: Date.now()
+    scorecard: final.json,
+    updated: Date.now(),
+    id,
   };
 
   CACHE.scorecard[id] = { data: payload, ts: Date.now() };
 
   return res.json(payload);
 });
+
 
 // ------------------------------
 // RUN SERVER
