@@ -6,154 +6,116 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Load RapidAPI info
 const RAPID_KEY = process.env.RAPIDAPI_KEY;
-const RAPID_HOST = process.env.RAPIDAPI_HOST || "cricbuzz-cricket.p.rapidapi.com";
-const RAPID_BASE = process.env.RAPIDAPI_BASE || "https://cricbuzz-cricket.p.rapidapi.com";
+const RAPID_HOST = process.env.RAPIDAPI_HOST;
+const RAPID_BASE = process.env.RAPIDAPI_BASE;
 
-// Local fallback cache
-let CACHE = {
-  live: null,
-  upcoming: null,
-  recent: null,
-  scorecard: {}
-};
-
-// Safe wrapper for API calls
-async function callAPI(url) {
-  try {
-    const response = await axios.get(url, {
-      headers: {
-        "X-RapidAPI-Key": RAPID_KEY,
-        "X-RapidAPI-Host": RAPID_HOST
-      }
-    });
-    return { ok: true, data: response.data };
-  } catch (err) {
-    return { ok: false, code: err?.response?.status };
-  }
+// Helper for RapidAPI request
+async function api(url) {
+    try {
+        const res = await axios.get(url, {
+            headers: {
+                "X-RapidAPI-Key": RAPID_KEY,
+                "X-RapidAPI-Host": RAPID_HOST
+            }
+        });
+        return { ok: true, data: res.data };
+    } catch (err) {
+        return { ok: false, code: err?.response?.status };
+    }
 }
 
+// HOME
 app.get("/", (req, res) => {
-  res.json({
-    status: "OK",
-    service: "CRICAI Proxy Server",
-    time: Date.now()
-  });
+    res.json({ status: "OK", service: "CRICAI Proxy", time: Date.now() });
 });
 
-// ================= LIVE ==================
+// =========================
+//    FETCH ALL SERIES
+// =========================
+async function getAllSeries() {
+    return api(`${RAPID_BASE}/series/v1`);
+}
+
+// =========================
+//     LIVE MATCHES
+// =========================
 app.get("/live", async (req, res) => {
-  const url = `${RAPID_BASE}/matches/v1/live`;
-  const api = await callAPI(url);
+    const series = await getAllSeries();
 
-  if (api.ok) {
-    CACHE.live = api.data;
-    return res.json(api.data);
-  }
+    if (!series.ok)
+        return res.json({ live: false, error: true, code: series.code });
 
-  if (CACHE.live) {
-    return res.json({
-      live: CACHE.live,
-      error: true,
-      message: "Live API failed, using cached result",
-      code: api.code
+    // extract only "In Progress" matches
+    let liveList = [];
+
+    series.data.seriesMap.forEach(group => {
+        group.series.forEach(s => {
+            if (s.state === "In Progress" && s.matches?.length) {
+                liveList.push(...s.matches);
+            }
+        });
     });
-  }
 
-  return res.status(500).json({
-    live: false,
-    error: true,
-    message: "Failed to fetch live matches",
-    code: api.code
-  });
+    res.json({ live: liveList });
 });
 
-// ================= UPCOMING ==================
+// =========================
+//     UPCOMING MATCHES
+// =========================
 app.get("/upcoming", async (req, res) => {
-  const url = `${RAPID_BASE}/matches/v1/upcoming`;
-  const api = await callAPI(url);
+    const series = await getAllSeries();
 
-  if (api.ok) {
-    CACHE.upcoming = api.data;
-    return res.json(api.data);
-  }
+    if (!series.ok)
+        return res.json({ upcoming: false, error: true, code: series.code });
 
-  if (CACHE.upcoming) {
-    return res.json({
-      upcoming: CACHE.upcoming,
-      error: true,
-      message: "Upcoming API failed, using cached",
-      code: api.code
+    let upcomingList = [];
+
+    series.data.seriesMap.forEach(group => {
+        group.series.forEach(s => {
+            if (s.state === "Preview" && s.matches?.length) {
+                upcomingList.push(...s.matches);
+            }
+        });
     });
-  }
 
-  return res.status(500).json({
-    upcoming: false,
-    error: true,
-    message: "Failed to fetch upcoming matches",
-    code: api.code
-  });
+    res.json({ upcoming: upcomingList });
 });
 
-// ================= RECENT ==================
+// =========================
+//     RECENT MATCHES
+// =========================
 app.get("/recent", async (req, res) => {
-  const url = `${RAPID_BASE}/matches/v1/recent`;
-  const api = await callAPI(url);
+    const series = await getAllSeries();
 
-  if (api.ok) {
-    CACHE.recent = api.data;
-    return res.json(api.data);
-  }
+    if (!series.ok)
+        return res.json({ recent: false, error: true, code: series.code });
 
-  if (CACHE.recent) {
-    return res.json({
-      recent: CACHE.recent,
-      error: true,
-      message: "Recent API failed, using cached",
-      code: api.code
+    let recentList = [];
+
+    series.data.seriesMap.forEach(group => {
+        group.series.forEach(s => {
+            if (s.state === "Complete" && s.matches?.length) {
+                recentList.push(...s.matches);
+            }
+        });
     });
-  }
 
-  return res.status(500).json({
-    recent: false,
-    error: true,
-    message: "Failed to fetch recent matches",
-    code: api.code
-  });
+    res.json({ recent: recentList });
 });
 
-// ================= SCORECARD ==================
+// =========================
+//     SCORECARD (works)
+// =========================
 app.get("/scorecard", async (req, res) => {
-  const matchId = req.query.id;
-  if (!matchId) return res.status(400).json({ error: "matchId required" });
+    const id = req.query.id;
+    if (!id) return res.status(400).json({ error: "Missing id" });
 
-  const url = `${RAPID_BASE}/mcenter/v1/${matchId}/hscard`;
-  const api = await callAPI(url);
+    const sc = await api(`${RAPID_BASE}/mcenter/v1/${id}/hscard`);
+    if (!sc.ok) return res.json({ error: true, code: sc.code });
 
-  if (api.ok) {
-    CACHE.scorecard[matchId] = api.data;
-    return res.json(api.data);
-  }
-
-  if (CACHE.scorecard[matchId]) {
-    return res.json({
-      scorecard: CACHE.scorecard[matchId],
-      error: true,
-      message: "Scorecard API failed, using cached",
-      code: api.code
-    });
-  }
-
-  return res.status(500).json({
-    scorecard: false,
-    error: true,
-    message: "Failed to fetch scorecard",
-    code: api.code
-  });
+    res.json(sc.data);
 });
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () =>
-  console.log(`🚀 CRICAI Proxy running on port ${PORT}`)
-);
+app.listen(PORT, () => console.log("CRICAI Proxy running:", PORT));
