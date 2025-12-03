@@ -1,272 +1,134 @@
-// CRICAI Proxy Server v3 — Hybrid JSON + HTML
-// - /status               → health check
-// - /matches              → cleaned JSON from ESPN scoreboard
-// - /cricbuzz, /cricbuzz/* → HTML proxy to Cricbuzz
-// - /espn, /espn/*        → JSON / HTML proxy to ESPN cricket APIs
-// - /yahoo, /yahoo/*      → HTML proxy to Yahoo Cricket
-
 import express from "express";
-import fetch from "node-fetch";
 import cors from "cors";
+import fetch from "node-fetch";
 
 const app = express();
 app.use(cors());
 
-// Common browser-like headers to reduce blocking
-const BASE_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-  "Accept-Language": "en-US,en;q=0.9",
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
+const BASE_URL = "https://cricbuzz-cricket.p.rapidapi.com";
+
+const headers = {
+  "x-rapidapi-key": RAPIDAPI_KEY,
+  "x-rapidapi-host": "cricbuzz-cricket.p.rapidapi.com"
 };
 
-// Simple helper for fetch with error handling
-async function fetchWithType(url, type = "text", extraHeaders = {}) {
-  const res = await fetch(url, {
-    headers: {
-      ...BASE_HEADERS,
-      ...extraHeaders,
-    },
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Upstream ${url} responded ${res.status}: ${body.slice(0, 200)}`);
-  }
-
-  if (type === "json") return res.json();
-  return res.text();
+// Helper function
+async function api(path) {
+  const url = `${BASE_URL}${path}`;
+  const res = await fetch(url, { headers });
+  return res.json();
 }
 
-/* ------------------------------------------------------------------ */
-/* STATUS                                                              */
-/* ------------------------------------------------------------------ */
-
+/* ------------------------------
+   STATUS CHECK
+------------------------------ */
 app.get("/status", (req, res) => {
   res.json({
     status: "OK",
-    service: "CRICAI Proxy Server",
-    time: Date.now(),
+    service: "CRICAI API v1 (RapidAPI)",
+    time: Date.now()
   });
 });
 
-/* ------------------------------------------------------------------ */
-/* CLEAN JSON MATCHES (ESPN SCOREBOARD)                               */
-/* ------------------------------------------------------------------ */
-
-const ESPN_SCOREBOARD =
-  "https://site.web.api.espn.com/apis/site/v2/sports/cricket/scoreboard";
-
-app.get("/matches", async (req, res) => {
+/* ------------------------------
+   LIVE MATCHES 
+------------------------------ */
+app.get("/live", async (req, res) => {
   try {
-    const data = await fetchWithType(ESPN_SCOREBOARD, "json", {
-      Accept: "application/json, text/plain, */*",
-    });
-
-    // ESPN sometimes uses data.events, sometimes leagues[].events
-    let events = [];
-    if (Array.isArray(data?.events)) {
-      events = data.events;
-    } else if (Array.isArray(data?.leagues)) {
-      for (const lg of data.leagues) {
-        if (Array.isArray(lg.events)) events.push(...lg.events);
-      }
-    }
-
-    const live = [];
-    const upcoming = [];
-    const recent = [];
-
-    for (const ev of events) {
-      const competition = ev?.competitions?.[0] || {};
-      const comps = competition.competitors || [];
-      const statusObj = ev?.status?.type || {};
-      const state = (statusObj.state || "").toLowerCase();
-
-      const match = {
-        id: ev.id,
-        uid: ev.uid,
-        name: ev.name,
-        shortName: ev.shortName,
-        series: ev.series?.[0]?.name || null,
-        startTime: ev.date,
-        state,
-        statusText:
-          statusObj.description || statusObj.detail || statusObj.shortDetail,
-        venue: competition.venue?.fullName || null,
-        format: competition.format?.description || null,
-        competitors: comps.map((c) => ({
-          id: c.id,
-          teamId: c.team?.id,
-          team: c.team?.shortDisplayName || c.team?.name,
-          score: c.score ?? null,
-          homeAway: c.homeAway,
-          winner: Boolean(c.winner),
-        })),
-      };
-
-      if (state === "in") live.push(match);
-      else if (state === "pre") upcoming.push(match);
-      else if (state === "post") recent.push(match);
-      else recent.push(match); // fallback
-    }
-
-    res.json({
-      status: "success",
-      source: "espn-scoreboard",
-      live,
-      upcoming,
-      recent,
-      meta: {
-        total: events.length,
-      },
-    });
+    const data = await api("/matches/v1/live");
+    res.json({ status: "success", live: data });
   } catch (err) {
-    console.error("ERROR /matches:", err);
-    res.status(500).json({
-      status: "error",
-      source: "espn-scoreboard",
-      message: err.message || String(err),
-    });
+    res.json({ status: "error", error: err.toString() });
   }
 });
 
-/* ------------------------------------------------------------------ */
-/* CRICBUZZ  (HTML proxy + path support)                               */
-/* ------------------------------------------------------------------ */
-
-// Root Cricbuzz home (HTML)
-app.get("/cricbuzz", async (req, res) => {
+/* ------------------------------
+   UPCOMING MATCHES 
+------------------------------ */
+app.get("/upcoming", async (req, res) => {
   try {
-    const url = "https://www.cricbuzz.com/";
-    const html = await fetchWithType(url, "text", {
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    });
-    res.set("Content-Type", "text/html; charset=utf-8");
-    res.send(html);
+    const data = await api("/matches/v1/upcoming");
+    res.json({ status: "success", upcoming: data });
   } catch (err) {
-    console.error("ERROR /cricbuzz:", err);
-    res.status(500).json({
-      error: "cricbuzz_failed",
-      message: err.message || String(err),
-    });
+    res.json({ status: "error", error: err.toString() });
   }
 });
 
-// Cricbuzz with arbitrary path, e.g. /cricbuzz/live-cricket-scores
-app.get("/cricbuzz/*", async (req, res) => {
+/* ------------------------------
+   RECENT / COMPLETED MATCHES 
+------------------------------ */
+app.get("/recent", async (req, res) => {
   try {
-    const path = req.params[0] || "";
-    const url = `https://www.cricbuzz.com/${path}`;
-    const html = await fetchWithType(url, "text", {
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    });
-    res.set("Content-Type", "text/html; charset=utf-8");
-    res.send(html);
+    const data = await api("/matches/v1/recent");
+    res.json({ status: "success", recent: data });
   } catch (err) {
-    console.error("ERROR /cricbuzz/*:", err);
-    res.status(500).json({
-      error: "cricbuzz_failed",
-      message: err.message || String(err),
-    });
+    res.json({ status: "error", error: err.toString() });
   }
 });
 
-/* ------------------------------------------------------------------ */
-/* ESPN PROXY (JSON + path support)                                   */
-/* ------------------------------------------------------------------ */
-
-// Simple default scoreboard proxy
-app.get("/espn", async (req, res) => {
+/* ------------------------------
+   MATCH DETAIL 
+------------------------------ */
+app.get("/match/:id", async (req, res) => {
   try {
-    const json = await fetchWithType(ESPN_SCOREBOARD, "json", {
-      Accept: "application/json, text/plain, */*",
-    });
-    res.json(json);
+    const data = await api(`/matches/v1/${req.params.id}`);
+    res.json({ status: "success", match: data });
   } catch (err) {
-    console.error("ERROR /espn:", err);
-    res.status(500).json({
-      error: "espn_failed",
-      message: err.message || String(err),
-    });
+    res.json({ status: "error", error: err.toString() });
   }
 });
 
-// Generic ESPN proxy: /espn/apis/site/v2/sports/cricket/scoreboard
-app.get("/espn/*", async (req, res) => {
+/* ------------------------------
+   LIVE SCORECARD 
+------------------------------ */
+app.get("/score/:id", async (req, res) => {
   try {
-    const path = req.params[0] || "";
-    const url = `https://site.web.api.espn.com/${path}`;
-    const data = await fetchWithType(url, "json", {
-      Accept: "application/json, text/plain, */*",
-    });
-    res.json(data);
+    const data = await api(`/mcenter/v1/${req.params.id}/scard`);
+    res.json({ status: "success", score: data });
   } catch (err) {
-    console.error("ERROR /espn/*:", err);
-    res.status(500).json({
-      error: "espn_failed",
-      message: err.message || String(err),
-    });
+    res.json({ status: "error", error: err.toString() });
   }
 });
 
-/* ------------------------------------------------------------------ */
-/* YAHOO CRICKET (HTML proxy + path support)                           */
-/* ------------------------------------------------------------------ */
-
-app.get("/yahoo", async (req, res) => {
+/* ------------------------------
+   COMMENTARY 
+------------------------------ */
+app.get("/commentary/:id", async (req, res) => {
   try {
-    const url = "https://cricket.yahoo.com/";
-    const html = await fetchWithType(url, "text", {
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    });
-    res.set("Content-Type", "text/html; charset=utf-8");
-    res.send(html);
+    const data = await api(`/mcenter/v1/${req.params.id}/comm`);
+    res.json({ status: "success", commentary: data });
   } catch (err) {
-    console.error("ERROR /yahoo:", err);
-    res.status(500).json({
-      error: "yahoo_failed",
-      message: err.message || String(err),
-    });
+    res.json({ status: "error", error: err.toString() });
   }
 });
 
-app.get("/yahoo/*", async (req, res) => {
+/* ------------------------------
+   TEAMS 
+------------------------------ */
+app.get("/teams", async (req, res) => {
   try {
-    const path = req.params[0] || "";
-    const url = `https://cricket.yahoo.com/${path}`;
-    const html = await fetchWithType(url, "text", {
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    });
-    res.set("Content-Type", "text/html; charset=utf-8");
-    res.send(html);
+    const data = await api("/teams/v1/international");
+    res.json({ status: "success", teams: data });
   } catch (err) {
-    console.error("ERROR /yahoo/*:", err);
-    res.status(500).json({
-      error: "yahoo_failed",
-      message: err.message || String(err),
-    });
+    res.json({ status: "error", error: err.toString() });
   }
 });
 
-/* ------------------------------------------------------------------ */
-/* ROOT                                                               */
-/* ------------------------------------------------------------------ */
-
-app.get("/", (req, res) => {
-  res.send(
-    "CRICAI Proxy Server v3 is running. Try /status, /matches, /cricbuzz, /espn, /yahoo"
-  );
+/* ------------------------------
+   SERIES 
+------------------------------ */
+app.get("/series", async (req, res) => {
+  try {
+    const data = await api("/series/v1/international");
+    res.json({ status: "success", series: data });
+  } catch (err) {
+    res.json({ status: "error", error: err.toString() });
+  }
 });
 
-/* ------------------------------------------------------------------ */
-/* START SERVER                                                       */
-/* ------------------------------------------------------------------ */
-
+/* ------------------------------
+   START SERVER
+------------------------------ */
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`CRICAI Proxy running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`CRICAI API running on ${PORT}`));
