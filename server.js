@@ -1,14 +1,57 @@
+// ======================================================================
+// CRICAI FULL PROXY SERVER (RapidAPI Stable Version + Fallback Cache)
+// ======================================================================
+
 import express from "express";
 import axios from "axios";
 import cors from "cors";
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
-// Load environment variables
-const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
-const RAPIDAPI_HOST = process.env.RAPIDAPI_HOST || "cricket-live-data.p.rapidapi.com";
+// ======================================================================
+// ENVIRONMENT VARIABLES
+// ======================================================================
+const RAPID_KEY = process.env.RAPIDAPI_KEY;
+const RAPID_HOST = process.env.RAPIDAPI_HOST || "cricket-live-data.p.rapidapi.com";
+const RAPID_BASE = process.env.RAPIDAPI_BASE || "https://cricket-live-data.p.rapidapi.com";
 
+if (!RAPID_KEY) {
+  console.log("❌ Missing RAPIDAPI_KEY");
+}
+
+// ======================================================================
+// CACHE SYSTEM FOR FALLBACKS
+// ======================================================================
+let CACHE = {
+  live: null,
+  upcoming: null,
+  recent: null,
+  scorecard: {} // scorecard[id] = cached data
+};
+
+// Helper to call RapidAPI safely
+async function callRapidAPI(endpoint, params = {}) {
+  const url = `${RAPID_BASE}${endpoint}`;
+  
+  try {
+    const response = await axios.get(url, {
+      params,
+      headers: {
+        "X-RapidAPI-Key": RAPID_KEY,
+        "X-RapidAPI-Host": RAPID_HOST
+      }
+    });
+    return { ok: true, data: response.data };
+  } catch (err) {
+    return { ok: false, error: err?.response?.status || err.message };
+  }
+}
+
+// ======================================================================
+// HOME ROUTE
+// ======================================================================
 app.get("/", (req, res) => {
   res.json({
     status: "OK",
@@ -17,217 +60,132 @@ app.get("/", (req, res) => {
   });
 });
 
-/* ---------------------------------------------------------
-   🔵 1. LIVE MATCHES — /live
----------------------------------------------------------- */
+// ======================================================================
+// LIVE MATCHES (with fallback)
+// ======================================================================
 app.get("/live", async (req, res) => {
-  try {
-    const url = `https://${RAPIDAPI_HOST}/matches/get-live-matches-v1`;
+  const api = await callRapidAPI("/match/live");
 
-    const response = await axios.get(url, {
-      headers: {
-        "x-rapidapi-key": RAPIDAPI_KEY,
-        "x-rapidapi-host": RAPIDAPI_HOST
-      }
-    });
+  if (api.ok) {
+    CACHE.live = api.data;
+    return res.json(api.data);
+  }
 
-    if (!response.data || response.data.length === 0) {
-      return res.json({
-        live: false,
-        matches: [],
-        message: "No live matches at the moment.",
-        reason: "Possibly in mid-innings break or match has not started.",
-        lastUpdated: Date.now()
-      });
-    }
-
+  // FALLBACK
+  if (CACHE.live) {
     return res.json({
-      live: true,
-      matches: response.data,
-      lastUpdated: Date.now()
-    });
-
-  } catch (error) {
-    if (error.response?.status === 403) {
-      return res.json({
-        live: false,
-        matches: [],
-        message: "Live feed temporarily restricted (403).",
-        reason: "Cricbuzz may be blocking automated requests.",
-        lastUpdated: Date.now()
-      });
-    }
-
-    return res.json({
-      live: false,
+      live: CACHE.live,
       error: true,
-      message: "Unexpected error fetching live matches.",
-      details: error.message,
+      message: "Live API failed — serving cached data.",
       lastUpdated: Date.now()
     });
   }
+
+  return res.status(500).json({
+    live: false,
+    error: true,
+    message: "Unexpected error fetching live matches.",
+    details: api.error
+  });
 });
 
-/* ---------------------------------------------------------
-   🔵 2. UPCOMING MATCHES — /upcoming
----------------------------------------------------------- */
+// ======================================================================
+// UPCOMING MATCHES (with fallback)
+// ======================================================================
 app.get("/upcoming", async (req, res) => {
-  try {
-    const url = `https://${RAPIDAPI_HOST}/matches/get-upcoming-matches-v1`;
+  const api = await callRapidAPI("/match/upcoming");
 
-    const response = await axios.get(url, {
-      headers: {
-        "x-rapidapi-key": RAPIDAPI_KEY,
-        "x-rapidapi-host": RAPIDAPI_HOST
-      }
-    });
+  if (api.ok) {
+    CACHE.upcoming = api.data;
+    return res.json(api.data);
+  }
 
-    if (!response.data || response.data.length === 0) {
-      return res.json({
-        upcoming: false,
-        matches: [],
-        message: "No upcoming matches found.",
-        lastUpdated: Date.now()
-      });
-    }
-
+  // FALLBACK
+  if (CACHE.upcoming) {
     return res.json({
-      upcoming: true,
-      matches: response.data,
-      lastUpdated: Date.now()
-    });
-
-  } catch (error) {
-    if (error.response?.status === 403) {
-      return res.json({
-        upcoming: false,
-        matches: [],
-        message: "Upcoming match feed unavailable (403).",
-        lastUpdated: Date.now()
-      });
-    }
-
-    return res.json({
-      upcoming: false,
+      upcoming: CACHE.upcoming,
       error: true,
-      message: "Unexpected error fetching upcoming matches.",
-      details: error.message,
+      message: "Upcoming API failed — serving cached data.",
       lastUpdated: Date.now()
     });
   }
+
+  return res.status(500).json({
+    upcoming: false,
+    error: true,
+    message: "Unexpected error fetching upcoming matches.",
+    details: api.error
+  });
 });
 
-/* ---------------------------------------------------------
-   🔵 3. RECENT MATCHES — /recent
----------------------------------------------------------- */
+// ======================================================================
+// RECENT MATCHES (with fallback)
+// ======================================================================
 app.get("/recent", async (req, res) => {
-  try {
-    const url = `https://${RAPIDAPI_HOST}/matches/get-recent-matches-v1`;
+  const api = await callRapidAPI("/match/recent");
 
-    const response = await axios.get(url, {
-      headers: {
-        "x-rapidapi-key": RAPIDAPI_KEY,
-        "x-rapidapi-host": RAPIDAPI_HOST
-      }
-    });
+  if (api.ok) {
+    CACHE.recent = api.data;
+    return res.json(api.data);
+  }
 
-    if (!response.data || response.data.length === 0) {
-      return res.json({
-        recent: false,
-        matches: [],
-        message: "No recent matches available.",
-        lastUpdated: Date.now()
-      });
-    }
-
+  // FALLBACK
+  if (CACHE.recent) {
     return res.json({
-      recent: true,
-      matches: response.data,
-      lastUpdated: Date.now()
-    });
-
-  } catch (error) {
-    if (error.response?.status === 403) {
-      return res.json({
-        recent: false,
-        matches: [],
-        message: "Recent matches feed restricted (403).",
-        lastUpdated: Date.now()
-      });
-    }
-
-    return res.json({
-      recent: false,
+      recent: CACHE.recent,
       error: true,
-      message: "Unexpected error fetching recent matches.",
-      details: error.message,
+      message: "Recent API failed — serving cached data.",
       lastUpdated: Date.now()
     });
   }
+
+  return res.status(500).json({
+    recent: false,
+    error: true,
+    message: "Unexpected error fetching recent matches.",
+    details: api.error
+  });
 });
 
-/* ---------------------------------------------------------
-   🔵 4. SCORECARD — /scorecard?id=XXXX
----------------------------------------------------------- */
+// ======================================================================
+// SCORECARD (with per-match fallback)
+// ======================================================================
 app.get("/scorecard", async (req, res) => {
   const matchId = req.query.id;
 
   if (!matchId) {
+    return res.status(400).json({ error: "matchId is required" });
+  }
+
+  const api = await callRapidAPI("/match/scorecard", { matchId });
+
+  if (api.ok) {
+    CACHE.scorecard[matchId] = api.data;
+    return res.json(api.data);
+  }
+
+  // FALLBACK
+  if (CACHE.scorecard[matchId]) {
     return res.json({
-      scorecard: false,
+      scorecard: CACHE.scorecard[matchId],
       error: true,
-      message: "matchId is required",
+      message: "Scorecard API failed — serving cached data.",
       lastUpdated: Date.now()
     });
   }
 
-  try {
-    const url = `https://${RAPIDAPI_HOST}/matches/get-scorecard-v2?matchId=${matchId}`;
-
-    const response = await axios.get(url, {
-      headers: {
-        "x-rapidapi-key": RAPIDAPI_KEY,
-        "x-rapidapi-host": RAPIDAPI_HOST
-      }
-    });
-
-    if (!response.data) {
-      return res.json({
-        scorecard: false,
-        message: "No scorecard found for this match.",
-        lastUpdated: Date.now()
-      });
-    }
-
-    return res.json({
-      scorecard: true,
-      data: response.data,
-      lastUpdated: Date.now()
-    });
-
-  } catch (error) {
-    if (error.response?.status === 403) {
-      return res.json({
-        scorecard: false,
-        message: "Scorecard restricted (403).",
-        lastUpdated: Date.now()
-      });
-    }
-
-    return res.json({
-      scorecard: false,
-      error: true,
-      message: "Unexpected error fetching scorecard.",
-      details: error.message,
-      lastUpdated: Date.now()
-    });
-  }
+  return res.status(500).json({
+    scorecard: false,
+    error: true,
+    message: "Unexpected error fetching scorecard.",
+    details: api.error
+  });
 });
 
-/* ---------------------------------------------------------
-   START SERVER
----------------------------------------------------------- */
+// ======================================================================
+// START SERVER
+// ======================================================================
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`CRICAI Proxy running on port ${PORT}`);
+  console.log(`🚀 CRICAI Proxy running on port ${PORT}`);
 });
