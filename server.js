@@ -1,134 +1,98 @@
+// ==================================================================
+// CRICAI FULL PROXY SERVER (Stable RapidAPI Version)
+// ==================================================================
+
 import express from "express";
+import axios from "axios";
 import cors from "cors";
-import fetch from "node-fetch";
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
-const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
-const BASE_URL = "https://cricbuzz-cricket.p.rapidapi.com";
+// =========================
+// ENVIRONMENT VARIABLES
+// =========================
+const RAPID_KEY = process.env.RAPIDAPI_KEY;
+const RAPID_HOST = "cricbuzz-cricket.p.rapidapi.com";
 
-const headers = {
-  "x-rapidapi-key": RAPIDAPI_KEY,
-  "x-rapidapi-host": "cricbuzz-cricket.p.rapidapi.com"
-};
-
-// Helper function
-async function api(path) {
-  const url = `${BASE_URL}${path}`;
-  const res = await fetch(url, { headers });
-  return res.json();
+if (!RAPID_KEY) {
+  console.log("❌ Missing RAPIDAPI_KEY — add it in Render Environment");
 }
 
-/* ------------------------------
-   STATUS CHECK
------------------------------- */
-app.get("/status", (req, res) => {
+// =========================
+// HOME ROUTE
+// =========================
+app.get("/", (req, res) => {
   res.json({
     status: "OK",
-    service: "CRICAI API v1 (RapidAPI)",
-    time: Date.now()
+    service: "CRICAI Proxy Server",
+    time: Date.now(),
+    routes: ["/matches", "/match?id=1234"]
   });
 });
 
-/* ------------------------------
-   LIVE MATCHES 
------------------------------- */
-app.get("/live", async (req, res) => {
+// =========================
+// GET MATCHES (Live + Recent)
+// =========================
+app.get("/matches", async (req, res) => {
   try {
-    const data = await api("/matches/v1/live");
-    res.json({ status: "success", live: data });
+    const response = await axios.get(
+      "https://cricbuzz-cricket.p.rapidapi.com/matches/v1/recent",
+      {
+        headers: {
+          "x-rapidapi-key": RAPID_KEY,
+          "x-rapidapi-host": RAPID_HOST,
+        },
+      }
+    );
+
+    res.json({
+      status: "success",
+      source: "rapidapi-cricbuzz",
+      data: response.data,
+    });
   } catch (err) {
-    res.json({ status: "error", error: err.toString() });
+    console.error("Error /matches:", err);
+    res.status(500).json({ error: "Failed to load matches" });
   }
 });
 
-/* ------------------------------
-   UPCOMING MATCHES 
------------------------------- */
-app.get("/upcoming", async (req, res) => {
+// =========================
+// GET MATCH DETAILS
+// =========================
+app.get("/match", async (req, res) => {
+  const id = req.query.id;
+
+  if (!id) return res.json({ error: "Match ID required ?id=1234" });
+
   try {
-    const data = await api("/matches/v1/upcoming");
-    res.json({ status: "success", upcoming: data });
+    const response = await axios.get(
+      "https://cricbuzz-cricket.p.rapidapi.com/mcenter/v1/" + id,
+      {
+        headers: {
+          "x-rapidapi-key": RAPID_KEY,
+          "x-rapidapi-host": RAPID_HOST,
+        },
+      }
+    );
+
+    res.json({
+      status: "success",
+      matchId: id,
+      source: "rapidapi-cricbuzz",
+      data: response.data,
+    });
   } catch (err) {
-    res.json({ status: "error", error: err.toString() });
+    console.error("Error /match:", err);
+    res.status(500).json({ error: "Failed to load match details" });
   }
 });
 
-/* ------------------------------
-   RECENT / COMPLETED MATCHES 
------------------------------- */
-app.get("/recent", async (req, res) => {
-  try {
-    const data = await api("/matches/v1/recent");
-    res.json({ status: "success", recent: data });
-  } catch (err) {
-    res.json({ status: "error", error: err.toString() });
-  }
-});
-
-/* ------------------------------
-   MATCH DETAIL 
------------------------------- */
-app.get("/match/:id", async (req, res) => {
-  try {
-    const data = await api(`/matches/v1/${req.params.id}`);
-    res.json({ status: "success", match: data });
-  } catch (err) {
-    res.json({ status: "error", error: err.toString() });
-  }
-});
-
-/* ------------------------------
-   LIVE SCORECARD 
------------------------------- */
-app.get("/score/:id", async (req, res) => {
-  try {
-    const data = await api(`/mcenter/v1/${req.params.id}/scard`);
-    res.json({ status: "success", score: data });
-  } catch (err) {
-    res.json({ status: "error", error: err.toString() });
-  }
-});
-
-/* ------------------------------
-   COMMENTARY 
------------------------------- */
-app.get("/commentary/:id", async (req, res) => {
-  try {
-    const data = await api(`/mcenter/v1/${req.params.id}/comm`);
-    res.json({ status: "success", commentary: data });
-  } catch (err) {
-    res.json({ status: "error", error: err.toString() });
-  }
-});
-
-/* ------------------------------
-   TEAMS 
------------------------------- */
-app.get("/teams", async (req, res) => {
-  try {
-    const data = await api("/teams/v1/international");
-    res.json({ status: "success", teams: data });
-  } catch (err) {
-    res.json({ status: "error", error: err.toString() });
-  }
-});
-
-/* ------------------------------
-   SERIES 
------------------------------- */
-app.get("/series", async (req, res) => {
-  try {
-    const data = await api("/series/v1/international");
-    res.json({ status: "success", series: data });
-  } catch (err) {
-    res.json({ status: "error", error: err.toString() });
-  }
-});
-
-/* ------------------------------
-   START SERVER
------------------------------- */
+// ==================================================================
+// START SERVER ON RENDER
+// ==================================================================
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => console.log(`CRICAI API running on ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🚀 CRICAI Proxy running on ${PORT}`);
+});
