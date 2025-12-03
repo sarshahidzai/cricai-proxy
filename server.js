@@ -1,10 +1,10 @@
 // ==================================================================
-// CRICAI FULL PROXY SERVER (Stable RapidAPI Version)
+// CRICAI FULL PROXY SERVER (Stable RapidAPI Version) - CommonJS
 // ==================================================================
 
-import express from "express";
-import axios from "axios";
-import cors from "cors";
+const express = require("express");
+const axios = require("axios");
+const cors = require("cors");
 
 const app = express();
 app.use(cors());
@@ -33,7 +33,7 @@ app.get("/", (req, res) => {
 });
 
 // =========================
-// GET MATCHES (Live + Recent)
+// GET MATCHES
 // =========================
 app.get("/matches", async (req, res) => {
   try {
@@ -53,7 +53,7 @@ app.get("/matches", async (req, res) => {
       data: response.data,
     });
   } catch (err) {
-    console.error("Error /matches:", err);
+    console.error("Error /matches:", err.message);
     res.status(500).json({ error: "Failed to load matches" });
   }
 });
@@ -84,13 +84,13 @@ app.get("/match", async (req, res) => {
       data: response.data,
     });
   } catch (err) {
-    console.error("Error /match:", err);
+    console.error("Error /match:", err.message);
     res.status(500).json({ error: "Failed to load match details" });
   }
 });
 
 // ==================================================================
-// START SERVER ON RENDER
+// START SERVER
 // ==================================================================
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
