@@ -252,6 +252,12 @@ app.get("/scorecard", async (req, res) => {
   return res.json(payload);
 });
 
+// ------------------------------
+// KEEPALIVE ENDPOINT
+// ------------------------------
+app.get("/keepalive", (req, res) => {
+  res.json({ status: "alive", time: Date.now() });
+});
 
 // ------------------------------
 // RUN SERVER
