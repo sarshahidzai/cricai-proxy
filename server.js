@@ -1,7 +1,3 @@
-// ======================================================================
-// CRICAI FULL PROXY SERVER (Stable RapidAPI Version)
-// ======================================================================
-
 import express from "express";
 import axios from "axios";
 import cors from "cors";
@@ -10,19 +6,17 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ===================================================
-// ENVIRONMENT VARIABLES
-// ===================================================
+// =============== ENV VARIABLES ===============
 const RAPID_KEY = process.env.RAPIDAPI_KEY;
 const RAPID_HOST = "cricbuzz-cricket.p.rapidapi.com";
 
 if (!RAPID_KEY) {
-  console.log("❌ Missing RAPIDAPI_KEY – add it in Render Environment");
+  console.log("❌ Missing RAPIDAPI_KEY in Render Environment!");
 }
 
-// ===================================================
-// HOME ROUTE
-// ===================================================
+// =============================================
+// HOME
+// =============================================
 app.get("/", (req, res) => {
   res.json({
     status: "OK",
@@ -31,69 +25,95 @@ app.get("/", (req, res) => {
   });
 });
 
-// ===================================================
-// GENERIC RAPIDAPI FORWARDER
-// ===================================================
-async function rapidProxy(path, params = {}) {
-  const url = `https://${RAPID_HOST}${path}`;
-
-  const response = await axios.get(url, {
-    params: params,
-    headers: {
-      "x-rapidapi-key": RAPID_KEY,
-      "x-rapidapi-host": RAPID_HOST,
-    }
-  });
-
-  return response.data;
-}
-
-// ===================================================
+// =============================================
 // LIVE MATCHES
-// ===================================================
+// =============================================
 app.get("/live", async (req, res) => {
   try {
-    const data = await rapidProxy("/matches/v1/live");
-    res.json(data);
+    const response = await axios.get(
+      `https://${RAPID_HOST}/matches/v1/live`,
+      {
+        headers: {
+          "X-RapidAPI-Key": RAPID_KEY,
+          "X-RapidAPI-Host": RAPID_HOST,
+        },
+      }
+    );
+    res.json(response.data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.json({ error: err.message });
   }
 });
 
-// ===================================================
+// =============================================
+// RECENT MATCHES
+// =============================================
+app.get("/recent", async (req, res) => {
+  try {
+    const response = await axios.get(
+      `https://${RAPID_HOST}/matches/v1/recent`,
+      {
+        headers: {
+          "X-RapidAPI-Key": RAPID_KEY,
+          "X-RapidAPI-Host": RAPID_HOST,
+        },
+      }
+    );
+    res.json(response.data);
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
+
+// =============================================
 // UPCOMING MATCHES
-// ===================================================
+// =============================================
 app.get("/upcoming", async (req, res) => {
   try {
-    const data = await rapidProxy("/matches/v1/upcoming");
-    res.json(data);
+    const response = await axios.get(
+      `https://${RAPID_HOST}/matches/v1/upcoming`,
+      {
+        headers: {
+          "X-RapidAPI-Key": RAPID_KEY,
+          "X-RapidAPI-Host": RAPID_HOST,
+        },
+      }
+    );
+    res.json(response.data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.json({ error: err.message });
   }
 });
 
-// ===================================================
-// SCORECARD
-// Example: /scorecard?matchId=12345
-// ===================================================
+// =============================================
+// FULL SCORECARD BY MATCH ID
+// =============================================
 app.get("/scorecard", async (req, res) => {
-  const matchId = req.query.matchId;
+  const matchId = req.query.id;
 
   if (!matchId) {
     return res.json({ error: "matchId is required" });
   }
 
   try {
-    const data = await rapidProxy("/matches/v1/scorecard", { matchId });
-    res.json(data);
+    const response = await axios.get(
+      `https://${RAPID_HOST}/mcenter/v1/${matchId}/scard`,
+      {
+        headers: {
+          "X-RapidAPI-Key": RAPID_KEY,
+          "X-RapidAPI-Host": RAPID_HOST,
+        },
+      }
+    );
+    res.json(response.data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.json({ error: err.message });
   }
 });
 
-// ===================================================
+// =============================================
 // START SERVER
-// ===================================================
+// =============================================
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 CRICAI Proxy running on port ${PORT}`);
